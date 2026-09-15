@@ -26,6 +26,14 @@ body{min-height:100vh;overflow-x:hidden;background:radial-gradient(circle at 15%
 .sub{color:#aaaab8;font-size:13px;line-height:1.6;margin-bottom:22px}
 .input{width:100%;height:52px;border-radius:15px;border:1px solid #ffffff18;background:#ffffff0b;color:#fff;outline:0;padding:0 16px;font-size:15px;margin-bottom:12px}
 .input:focus{border-color:#7b8cff88;box-shadow:0 0 0 3px #7b8cff22}
+/* Always show dots, never clear text, no browser "show password" styling */
+input#password[type="password"],
+input.pw-mask{
+  -webkit-text-security:disc !important;
+  text-security:disc !important;
+  font-family:text-security-disc,Inter,system-ui,sans-serif !important;
+  letter-spacing:0.15em;
+}
 .btn{height:44px;border:0;border-radius:13px;background:#7b8cff;color:#10111a;font-weight:700;padding:0 16px;cursor:pointer;box-shadow:0 9px 28px #7b8cff45;transition:.2s;font-size:13px}
 .btn:hover{transform:translateY(-2px);filter:brightness(1.08)}
 .btn.secondary{background:#ffffff0b;color:#fff;border:1px solid #ffffff16;box-shadow:none}
@@ -68,7 +76,7 @@ function fmt(ts) {
   try { return new Date(ts).toLocaleString(); } catch { return ts; }
 }
 function escapeHtml(s) {
-  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(s || "").replace(/&/g,"&").replace(/</g,"<").replace(/>/g,">").replace(/"/g,""");
 }
 async function sha256Hex(str) {
   const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
@@ -81,18 +89,42 @@ function login() {
     <section class="card glass login">
       <div class="brand">AKKOAUDIO · ADMIN</div>
       <h1 class="h">Sign in</h1>
-      <p class="sub">Review access requests and manage tokens. Password is never sent in plain text.</p>
-      <form id="loginForm">
-        <input class="input" id="password" type="password" placeholder="Admin password" autocomplete="current-password">
-        <button class="btn" style="width:100%;height:50px">Sign in</button>
+      <p class="sub">Password is masked on screen and never sent in plain text.</p>
+      <form id="loginForm" autocomplete="off">
+        <input
+          class="input pw-mask"
+          id="password"
+          type="password"
+          name="password"
+          placeholder="Admin password"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          inputmode="text"
+          data-lpignore="true"
+          data-1p-ignore="true"
+          data-form-type="other"
+        >
+        <button class="btn" style="width:100%;height:50px" type="submit">Sign in</button>
         <div class="error" id="error"></div>
       </form>
     </section>`;
+
+  const pw = document.getElementById("password");
+  // Keep type=password even if something tries to flip it to text
+  const lockType = () => { if (pw.type !== "password") pw.type = "password"; };
+  pw.addEventListener("input", lockType);
+  pw.addEventListener("focus", lockType);
+  setInterval(lockType, 500);
+
   document.getElementById("loginForm").onsubmit = async (e) => {
     e.preventDefault();
     const err = document.getElementById("error");
     err.textContent = "";
-    const password = document.getElementById("password").value;
+    const password = pw.value;
+    // Wipe field immediately so nothing stays visible/copyable
+    pw.value = "";
     const btn = e.target.querySelector("button");
     btn.disabled = true;
     try {
@@ -104,7 +136,6 @@ function login() {
         return;
       }
       const proof = await sha256Hex(ch.nonce + ":" + password);
-      document.getElementById("password").value = "";
       const r = await fetch("/.netlify/functions/admin-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
