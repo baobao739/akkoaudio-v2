@@ -12,26 +12,27 @@
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
-# Keep admin out of Google
 [[headers]]
   for = "/admin.html"
   [headers.values]
     X-Robots-Tag = "noindex, nofollow, noarchive, nosnippet"
-    Cache-Control = "no-store"
+    Cache-Control = "no-store, no-cache, must-revalidate"
+    X-Frame-Options = "DENY"
 
 [[headers]]
   for = "/admin"
   [headers.values]
     X-Robots-Tag = "noindex, nofollow, noarchive, nosnippet"
-    Cache-Control = "no-store"
+    Cache-Control = "no-store, no-cache, must-revalidate"
+    X-Frame-Options = "DENY"
 
 [[headers]]
   for = "/.netlify/functions/*"
   [headers.values]
     X-Robots-Tag = "noindex, nofollow"
     Cache-Control = "no-store"
+    X-Content-Type-Options = "nosniff"
 
-# /admin and /admin/ → admin.html
 [[redirects]]
   from = "/admin"
   to = "/admin.html"

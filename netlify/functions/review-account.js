@@ -1,18 +1,18 @@
 const { createClient } = require("@supabase/supabase-js");
-const { getCookie, verifyToken, json } = require("./_shared/auth");
+const { requireAdmin, json } = require("./_shared/auth");
 
 function db() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false }
-  });
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Supabase not configured");
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
 
-  if (!(await verifyToken(getCookie(event, "akkoflac_admin"), "admin"))) {
-    return json(401, { error: "Unauthorized" });
-  }
+  const auth = await requireAdmin(event);
+  if (!auth.ok) return json(401, { error: "Unauthorized" });
 
   try {
     const body = JSON.parse(event.body || "{}");
@@ -20,7 +20,9 @@ exports.handler = async (event) => {
     const action = String(body.action || "").trim().toLowerCase();
     const note = String(body.note || "").trim().slice(0, 300) || null;
 
-    if (!id) return json(400, { error: "Missing account id." });
+    if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+      return json(400, { error: "Invalid account id." });
+    }
     if (!["approve", "deny", "revoke"].includes(action)) {
       return json(400, { error: "action must be approve, deny, or revoke." });
     }
@@ -75,7 +77,6 @@ exports.handler = async (event) => {
       return json(200, { ok: true, account: data });
     }
 
-    // revoke — kick approved users; next verify-session fails and cookie is cleared
     if (existing.status !== "approved") {
       return json(400, { error: `Only approved accounts can be revoked (current: ${existing.status}).` });
     }

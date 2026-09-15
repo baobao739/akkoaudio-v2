@@ -80,16 +80,29 @@ async function sha256Hex(str) {
   return Array.from(new Uint8Array(dig)).map(b => b.toString(16).padStart(2,"0")).join("");
 }
 
-function login() {
+/** Only treat a real successful auth response as logged-in. Never fail open. */
+function isAuthedAccountsResponse(res, data) {
+  return (
+    res &&
+    res.ok &&
+    res.status === 200 &&
+    data &&
+    data.ok === true &&
+    Array.isArray(data.pending) &&
+    Array.isArray(data.approved)
+  );
+}
+
+function login(message) {
   app.innerHTML = `
     <section class="card glass login">
       <div class="brand">ADMIN</div>
       <h1 class="h">Sign in</h1>
-      <p class="sub">Password is masked on screen and never sent in plain text.</p>
+      <p class="sub">Password never leaves this page in plain text. Backend must be configured.</p>
       <form id="loginForm" autocomplete="off">
         <input class="input pw-mask" id="password" type="password" name="password" placeholder="Admin password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
         <button class="btn" style="width:100%;height:50px" type="submit">Sign in</button>
-        <div class="error" id="error"></div>
+        <div class="error" id="error">${message ? escapeHtml(message) : ""}</div>
       </form>
     </section>`;
   const pw = document.getElementById("password");
@@ -109,7 +122,7 @@ function login() {
       const chRes = await fetch("/.netlify/functions/admin-login", { method: "GET", cache: "no-store", credentials: "include" });
       const ch = await chRes.json().catch(() => ({}));
       if (!chRes.ok || !ch.nonce || !ch.challengeId) {
-        err.textContent = ch.error || "Could not start login.";
+        err.textContent = ch.error || "Could not start login. Check Netlify env vars.";
         btn.disabled = false;
         return;
       }
@@ -121,23 +134,34 @@ function login() {
         body: JSON.stringify({ challengeId: ch.challengeId, proof })
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) {
+      if (!r.ok || !d.ok) {
         err.textContent = d.error || "Login failed.";
         btn.disabled = false;
         return;
       }
       dashboard();
     } catch {
-      err.textContent = "Network error.";
+      err.textContent = "Network error. Is the site deployed on Netlify?";
       btn.disabled = false;
     }
   };
 }
 
-async function loadAccounts() {
-  const r = await fetch("/.netlify/functions/list-accounts", { cache: "no-store", credentials: "include" });
-  if (r.status === 401) { login(); return null; }
-  return r.json();
+async function fetchAccounts() {
+  try {
+    const r = await fetch("/.netlify/functions/list-accounts", {
+      cache: "no-store",
+      credentials: "include"
+    });
+    const data = await r.json().catch(() => null);
+    if (r.status === 401) return { authed: false, data: null };
+    if (!isAuthedAccountsResponse(r, data)) {
+      return { authed: false, data: null, broken: true };
+    }
+    return { authed: true, data };
+  } catch {
+    return { authed: false, data: null, broken: true };
+  }
 }
 
 function renderRow(row) {
@@ -150,9 +174,9 @@ function renderRow(row) {
   } else if (row.status === "denied" || row.status === "revoked") {
     buttons = `<button class="btn success" data-act="approve">Re-approve</button>`;
   }
-  return `<div class="row" data-id="${row.id}">
+  return `<div class="row" data-id="${escapeHtml(row.id)}">
     <div class="meta">
-      <div class="name">${escapeHtml(row.username)} <span style="color:#888;font-weight:500;font-size:12px">· ${row.status}</span></div>
+      <div class="name">${escapeHtml(row.username)} <span style="color:#888;font-weight:500;font-size:12px">· ${escapeHtml(row.status)}</span></div>
       <div class="detail">
         Created ${fmt(row.created_at)}
         ${row.reviewed_at ? " · Reviewed " + fmt(row.reviewed_at) : ""}
@@ -164,6 +188,13 @@ function renderRow(row) {
   </div>`;
 }
 
+async function logout() {
+  try {
+    await fetch("/.netlify/functions/admin-logout", { method: "POST", credentials: "include", cache: "no-store" });
+  } catch {}
+  login("Signed out.");
+}
+
 async function dashboard() {
   app.innerHTML = `
     <section class="card glass">
@@ -171,14 +202,18 @@ async function dashboard() {
         <div>
           <div class="brand">ADMIN</div>
           <h1 class="h">Accounts</h1>
-          <p class="sub">Approve, deny, or revoke. Sessions stay until you revoke — then they are locked out on next load.</p>
+          <p class="sub">Approve, deny, or revoke. User sessions last until you revoke.</p>
         </div>
-        <div class="actions"><button class="btn secondary" id="refresh">Refresh</button></div>
+        <div class="actions">
+          <button class="btn secondary" id="refresh">Refresh</button>
+          <button class="btn secondary" id="logout">Log out</button>
+        </div>
       </div>
-      <div class="note">Passwords are hashed. You see usernames + status only. Revoke kills access even with a permanent session cookie.</div>
+      <div class="note">Passwords are hashed — usernames + status only. Revoke locks them out on next page load.</div>
       <div id="content"><p class="sub">Loading…</p></div>
     </section>`;
   document.getElementById("refresh").onclick = () => refresh();
+  document.getElementById("logout").onclick = () => logout();
   await refresh();
 }
 
@@ -186,8 +221,12 @@ async function refresh() {
   const content = document.getElementById("content");
   if (!content) return;
   content.innerHTML = `<p class="sub">Loading…</p>`;
-  const data = await loadAccounts();
-  if (!data) return;
+  const result = await fetchAccounts();
+  if (!result.authed) {
+    login(result.broken ? "Session invalid or backend not ready. Sign in again." : "Session expired. Sign in.");
+    return;
+  }
+  const data = result.data;
   const pending = data.pending || [];
   const approved = data.approved || [];
   const denied = data.denied || [];
@@ -212,26 +251,32 @@ async function refresh() {
     btn.onclick = async () => {
       const id = btn.closest(".row").dataset.id;
       const action = btn.dataset.act;
-      if (action === "revoke" && !confirm("Revoke this account? They will be locked out on their next page load.")) return;
+      if (action === "revoke" && !confirm("Revoke this account? They lock out on next page load.")) return;
       btn.disabled = true;
-      const r = await fetch("/.netlify/functions/review-account", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ id, action })
-      });
-      const d = await r.json().catch(() => ({}));
-      if (r.status === 401) { login(); return; }
-      if (!r.ok) { alert(d.error || "Failed"); btn.disabled = false; return; }
-      refresh();
+      try {
+        const r = await fetch("/.netlify/functions/review-account", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ id, action })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 401) { login("Session expired."); return; }
+        if (!r.ok) { alert(d.error || "Failed"); btn.disabled = false; return; }
+        refresh();
+      } catch {
+        alert("Network error");
+        btn.disabled = false;
+      }
     };
   });
 }
 
 (async () => {
-  const r = await fetch("/.netlify/functions/list-accounts", { cache: "no-store", credentials: "include" });
-  if (r.status === 401) login();
-  else dashboard();
+  app.innerHTML = `<section class="card glass login"><p class="sub">Checking session…</p></section>`;
+  const result = await fetchAccounts();
+  if (result.authed) dashboard();
+  else login(result.broken ? "Backend not ready or not logged in. Sign in after Netlify + env vars are set." : "");
 })();
 </script>
 </body>

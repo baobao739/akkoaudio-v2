@@ -1,46 +1,33 @@
 # akkoaudio-v2
 
-AkkoAudio with **username + password accounts** and admin approval.
+Username + password accounts with admin approval / revoke.
 
-## How access works
-
-1. User opens the site → creates an account (username + password).
-2. Account starts as **pending**.
-3. You open `/admin`, log in with `ADMIN_PASSWORD`, and **Approve** or **Deny**.
-4. User logs in again:
-   - **pending** → message that approval is still needed
-   - **denied** → denied message
-   - **approved** → unlocks the player (HttpOnly session cookie, 30 days)
-
-Passwords are stored as **PBKDF2 hashes only**. The admin panel shows usernames and status — **not** plaintext passwords.
-
-## Setup
+## Setup (required)
 
 ### 1. Supabase
 
-Run `supabase.sql` in the Supabase SQL editor (creates `accounts` table).
+SQL Editor → run `supabase.sql` (or the accounts table from that file).
 
 ### 2. Netlify env vars
 
-| Variable | Purpose |
-|----------|---------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server only) |
-| `SESSION_SECRET` | Long random string for signing cookies |
+| Variable | Notes |
+|----------|--------|
+| `SUPABASE_URL` | Project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | **service_role** key only (never expose client-side) |
+| `SESSION_SECRET` | Long random string (≥16 chars) |
 | `ADMIN_PASSWORD` | Password for `/admin` |
 
-### 3. Deploy
+Deploy from GitHub → set env vars → **redeploy** after changing env.
 
-Connect the repo to Netlify and deploy. Admin: `https://your-site/admin`
+### 3. Use
 
-## API (Netlify functions)
+- Site: `https://your-site.netlify.app`
+- Admin: `https://your-site.netlify.app/admin` → password required
+- Approve users → they log in forever until you **Revoke**
 
-| Path | Role |
-|------|------|
-| `register` | Create pending account |
-| `login` | Log in; returns pending/denied or sets session |
-| `verify-session` | Check current user session |
-| `logout` | Clear user session cookie |
-| `list-accounts` | Admin: list accounts |
-| `review-account` | Admin: approve / deny |
-| `admin-login` | Admin password login |
+## Security notes
+
+- Admin UI **fails closed**: only opens after a real `200` + valid session.
+- Passwords stored as PBKDF2 hashes (admin never sees plaintext).
+- Admin session ~2 hours; user session permanent until revoke.
+- Admin APIs require signed HttpOnly cookie.

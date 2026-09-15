@@ -1,18 +1,18 @@
 const { createClient } = require("@supabase/supabase-js");
-const { getCookie, verifyToken, json } = require("./_shared/auth");
+const { requireAdmin, json } = require("./_shared/auth");
 
 function db() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false }
-  });
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Supabase not configured");
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "GET") return json(405, { error: "Method not allowed" });
 
-  if (!(await verifyToken(getCookie(event, "akkoflac_admin"), "admin"))) {
-    return json(401, { error: "Unauthorized" });
-  }
+  const auth = await requireAdmin(event);
+  if (!auth.ok) return json(401, { error: "Unauthorized" });
 
   try {
     const supabase = db();
@@ -35,7 +35,7 @@ exports.handler = async (event) => {
       else denied.push(row);
     }
 
-    return json(200, { pending, approved, denied, revoked });
+    return json(200, { ok: true, pending, approved, denied, revoked });
   } catch (error) {
     console.error(error);
     return json(500, { error: "Server error." });

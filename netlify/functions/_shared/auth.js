@@ -2,7 +2,9 @@ const enc = new TextEncoder();
 
 function getSecret() {
   const secret = process.env.SESSION_SECRET;
-  if (!secret) throw new Error("SESSION_SECRET is not configured");
+  if (!secret || String(secret).length < 16) {
+    throw new Error("SESSION_SECRET is not configured");
+  }
   return secret;
 }
 
@@ -38,14 +40,19 @@ async function makeToken(type, extra = "") {
 }
 
 async function parseToken(token, expectedType) {
-  if (!token) return { ok: false };
+  if (!token || typeof token !== "string") return { ok: false };
   const parts = token.split(".");
   if (parts.length < 3) return { ok: false };
   if (parts[0] !== expectedType) return { ok: false };
 
   const signature = parts[parts.length - 1];
   const payload = parts.slice(0, -1).join(".");
-  const expected = await sign(payload);
+  let expected;
+  try {
+    expected = await sign(payload);
+  } catch {
+    return { ok: false };
+  }
   const a = enc.encode(expected);
   const b = enc.encode(signature);
   if (a.length !== b.length) return { ok: false };
@@ -55,11 +62,13 @@ async function parseToken(token, expectedType) {
 
   const issued = Number(parts[1]);
   if (!Number.isFinite(issued) || issued <= 0) return { ok: false };
+  // Reject tokens from the future (clock skew allowance 5 min)
+  if (issued > Date.now() + 5 * 60 * 1000) return { ok: false };
 
-  // User sessions are permanent (access ends only when admin revokes the account).
-  // Admin sessions still expire after a long window as a safety net.
-  if (expectedType !== "user") {
-    const maxAgeMs = 1000 * 60 * 60 * 24 * 365 * 10;
+  // User sessions: permanent until account revoked.
+  // Admin sessions: 2 hours (cookie Max-Age also enforces).
+  if (expectedType === "admin") {
+    const maxAgeMs = 1000 * 60 * 60 * 2;
     if (Date.now() - issued >= maxAgeMs) return { ok: false };
   }
 
@@ -82,6 +91,7 @@ function getCookie(event, name) {
 }
 
 function cookie(name, value, maxAge) {
+  // Secure + HttpOnly + SameSite=Lax — not readable by JS, not sent cross-site on POST from other origins easily
   return `${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
 
@@ -95,10 +105,23 @@ function json(statusCode, body, headers = {}) {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
       ...headers
     },
     body: JSON.stringify(body)
   };
+}
+
+async function requireAdmin(event) {
+  try {
+    const raw = getCookie(event, "akkoflac_admin");
+    if (!raw) return { ok: false };
+    const parsed = await parseToken(raw, "admin");
+    if (!parsed.ok) return { ok: false };
+    return { ok: true, issued: parsed.issued };
+  } catch {
+    return { ok: false };
+  }
 }
 
 async function hashAccessToken(raw) {
@@ -179,8 +202,8 @@ function isValidPassword(password) {
   return p.length >= 6 && p.length <= 128;
 }
 
-/** Effectively permanent browser cookie (browsers may still cap ~400 days). */
 const USER_SESSION_SECONDS = 60 * 60 * 24 * 365 * 10;
+const ADMIN_SESSION_SECONDS = 60 * 60 * 2;
 
 module.exports = {
   makeToken,
@@ -190,6 +213,7 @@ module.exports = {
   cookie,
   clearCookie,
   json,
+  requireAdmin,
   hashAccessToken,
   generateAccessToken,
   hashPassword,
@@ -197,5 +221,6 @@ module.exports = {
   normalizeUsername,
   isValidUsername,
   isValidPassword,
-  USER_SESSION_SECONDS
+  USER_SESSION_SECONDS,
+  ADMIN_SESSION_SECONDS
 };

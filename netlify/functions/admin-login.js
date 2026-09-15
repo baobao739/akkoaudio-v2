@@ -1,4 +1,4 @@
-const { makeToken, cookie, json } = require("./_shared/auth");
+const { makeToken, cookie, json, ADMIN_SESSION_SECONDS } = require("./_shared/auth");
 
 const attempts = new Map();
 const challenges = new Map();
@@ -6,7 +6,6 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILS = 5;
 const FAIL_DELAY_MS = 700;
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
-const ADMIN_SESSION_SECONDS = 60 * 60 * 2;
 
 function clientKey(event) {
   const h = event.headers || {};
@@ -74,6 +73,13 @@ exports.handler = async (event) => {
   const method = event.httpMethod;
 
   if (method === "GET") {
+    // Do not issue challenges if admin password is unset
+    if (!String(process.env.ADMIN_PASSWORD || "").length) {
+      return json(500, { error: "Admin is not configured. Set ADMIN_PASSWORD." });
+    }
+    if (!process.env.SESSION_SECRET || String(process.env.SESSION_SECRET).length < 16) {
+      return json(500, { error: "Admin is not configured. Set SESSION_SECRET." });
+    }
     purgeChallenges();
     const id = randomId();
     const nonce = randomId() + randomId();
@@ -150,6 +156,7 @@ exports.handler = async (event) => {
       }
     );
   } catch (error) {
+    console.error(error);
     await sleep(FAIL_DELAY_MS);
     return json(400, { ok: false, error: "Invalid request." });
   }
