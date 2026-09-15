@@ -1,4 +1,4 @@
-# Security + anti-indexing for AkkoAudio
+# AkkoAudio — security headers + admin at /admin.html
 
 [build]
   publish = "."
@@ -12,6 +12,7 @@
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
+# Keep admin out of Google
 [[headers]]
   for = "/admin.html"
   [headers.values]
@@ -19,7 +20,7 @@
     Cache-Control = "no-store"
 
 [[headers]]
-  for = "/a/*"
+  for = "/admin"
   [headers.values]
     X-Robots-Tag = "noindex, nofollow, noarchive, nosnippet"
     Cache-Control = "no-store"
@@ -30,18 +31,15 @@
     X-Robots-Tag = "noindex, nofollow"
     Cache-Control = "no-store"
 
+# /admin and /admin/ → admin.html
 [[redirects]]
-  from = "/a/k7m2x9"
+  from = "/admin"
   to = "/admin.html"
   status = 200
   force = true
 
 [[redirects]]
-  from = "/admin"
-  to = "/"
-  status = 302
-
-[[redirects]]
   from = "/admin/"
-  to = "/"
-  status = 302
+  to = "/admin.html"
+  status = 200
+  force = true
