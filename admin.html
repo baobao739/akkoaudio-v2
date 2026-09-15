@@ -53,11 +53,7 @@ input.pw-mask{
 .row .name{font-weight:700;font-size:15px;margin-bottom:4px}
 .row .detail{color:#aaaab8;font-size:12px;line-height:1.5;word-break:break-word}
 .row .btns{display:flex;gap:8px;flex-wrap:wrap}
-.token-banner{margin:0 0 18px;padding:14px 16px;border-radius:16px;border:1px solid #66e39a55;background:#66e39a18;color:#b8f5d0;font-size:13px;line-height:1.5;word-break:break-all}
-.token-banner code{display:block;margin-top:8px;padding:10px;border-radius:10px;background:#0006;font-family:ui-monospace,monospace;font-size:12px;color:#fff}
-.nav{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
-.nav button{height:38px}
-.nav button.active{outline:2px solid #7b8cff88}
+.note{margin:0 0 16px;padding:12px 14px;border-radius:14px;background:#7b8cff18;border:1px solid #7b8cff44;color:#c5cbff;font-size:12px;line-height:1.5}
 @media(max-width:640px){.stats{grid-template-columns:1fr}.card{padding:22px}}
 </style>
 </head>
@@ -67,15 +63,17 @@ input.pw-mask{
 <div class="shell" id="app"></div>
 <script>
 const app = document.getElementById("app");
-let view = "requests";
-let lastIssuedToken = null;
 
 function fmt(ts) {
   if (!ts) return "—";
   try { return new Date(ts).toLocaleString(); } catch { return ts; }
 }
 function escapeHtml(s) {
-  return String(s || "").replace(/&/g,"&").replace(/</g,"<").replace(/>/g,">").replace(/"/g,""");
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 async function sha256Hex(str) {
   const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
@@ -83,7 +81,6 @@ async function sha256Hex(str) {
 }
 
 function login() {
-  lastIssuedToken = null;
   app.innerHTML = `
     <section class="card glass login">
       <div class="brand">ADMIN</div>
@@ -137,40 +134,26 @@ function login() {
   };
 }
 
-async function loadRequests() {
-  const r = await fetch("/.netlify/functions/list-requests", { cache: "no-store", credentials: "include" });
-  if (r.status === 401) { login(); return null; }
-  return r.json();
-}
-async function loadTokens() {
-  const r = await fetch("/.netlify/functions/list-tokens", { cache: "no-store", credentials: "include" });
+async function loadAccounts() {
+  const r = await fetch("/.netlify/functions/list-accounts", { cache: "no-store", credentials: "include" });
   if (r.status === 401) { login(); return null; }
   return r.json();
 }
 
-function renderRowRequest(row) {
+function renderRow(row) {
   const pending = row.status === "pending";
   return `<div class="row" data-id="${row.id}">
     <div class="meta">
-      <div class="name">${escapeHtml(row.name)} <span style="color:#888;font-weight:500;font-size:12px">· ${row.status}</span></div>
+      <div class="name">${escapeHtml(row.username)} <span style="color:#888;font-weight:500;font-size:12px">· ${row.status}</span></div>
       <div class="detail">
-        ${row.contact ? escapeHtml(row.contact) + "<br>" : ""}
-        ${row.message ? escapeHtml(row.message) + "<br>" : ""}
-        Submitted ${fmt(row.created_at)}
+        Created ${fmt(row.created_at)}
         ${row.reviewed_at ? " · Reviewed " + fmt(row.reviewed_at) : ""}
+        ${row.last_login_at ? " · Last login " + fmt(row.last_login_at) : ""}
+        ${row.review_note ? "<br>Note: " + escapeHtml(row.review_note) : ""}
       </div>
     </div>
     <div class="btns">${pending ? `<button class="btn success" data-act="approve">Approve</button>
       <button class="btn danger" data-act="deny">Deny</button>` : ""}</div>
-  </div>`;
-}
-function renderRowToken(row) {
-  return `<div class="row" data-id="${row.id}">
-    <div class="meta">
-      <div class="name">${escapeHtml(row.label || "Token")} <span style="color:#888;font-weight:500;font-size:12px">· ${row.token_prefix}…</span></div>
-      <div class="detail">Created ${fmt(row.created_at)}${row.last_used_at ? " · Last used " + fmt(row.last_used_at) : " · Never used"}${row.revoked ? " · <span style='color:#ff929f'>REVOKED</span>" : ""}</div>
-    </div>
-    <div class="btns">${!row.revoked ? `<button class="btn danger" data-act="revoke">Revoke</button>` : ""}</div>
   </div>`;
 }
 
@@ -180,34 +163,15 @@ async function dashboard() {
       <div class="top">
         <div>
           <div class="brand">ADMIN</div>
-          <h1 class="h">Access control</h1>
-          <p class="sub">Approve requests to issue a one-time-visible token. Revoke anytime.</p>
+          <h1 class="h">Accounts</h1>
+          <p class="sub">Approve or deny user accounts. Users log in with username + password after approval.</p>
         </div>
         <div class="actions"><button class="btn secondary" id="refresh">Refresh</button></div>
       </div>
-      <div class="nav">
-        <button class="btn secondary ${view === "requests" ? "active" : ""}" id="tabRequests">Requests</button>
-        <button class="btn secondary ${view === "tokens" ? "active" : ""}" id="tabTokens">Tokens</button>
-      </div>
-      <div id="tokenBanner"></div>
+      <div class="note">Passwords are stored as irreversible hashes. You can see usernames and status only — not the original password.</div>
       <div id="content"><p class="sub">Loading…</p></div>
     </section>`;
   document.getElementById("refresh").onclick = () => refresh();
-  document.getElementById("tabRequests").onclick = () => { view = "requests"; dashboard(); };
-  document.getElementById("tabTokens").onclick = () => { view = "tokens"; dashboard(); };
-  if (lastIssuedToken) {
-    document.getElementById("tokenBanner").innerHTML = `
-      <div class="token-banner">
-        <strong>Copy this token now — it will not be shown again.</strong>
-        <code>${escapeHtml(lastIssuedToken)}</code>
-        <div style="margin-top:10px">
-          <button class="btn secondary" id="copyToken">Copy token</button>
-          <button class="btn secondary" id="dismissToken">Dismiss</button>
-        </div>
-      </div>`;
-    document.getElementById("copyToken").onclick = async () => { try { await navigator.clipboard.writeText(lastIssuedToken); } catch {} };
-    document.getElementById("dismissToken").onclick = () => { lastIssuedToken = null; document.getElementById("tokenBanner").innerHTML = ""; };
-  }
   await refresh();
 }
 
@@ -215,78 +179,45 @@ async function refresh() {
   const content = document.getElementById("content");
   if (!content) return;
   content.innerHTML = `<p class="sub">Loading…</p>`;
-  if (view === "requests") {
-    const data = await loadRequests();
-    if (!data) return;
-    const pending = data.pending || [];
-    const approved = data.approved || [];
-    const denied = data.denied || [];
-    content.innerHTML = `
-      <div class="stats">
-        <div class="stat"><b>${pending.length}</b><span>PENDING</span></div>
-        <div class="stat"><b>${approved.length}</b><span>APPROVED</span></div>
-        <div class="stat"><b>${denied.length}</b><span>DENIED</span></div>
-      </div>
-      <div class="section-title">Pending</div>
-      <div class="list">${pending.length ? pending.map(renderRowRequest).join("") : `<div class="detail" style="padding:8px">No pending requests.</div>`}</div>
-      <div class="section-title">Approved</div>
-      <div class="list">${approved.length ? approved.map(renderRowRequest).join("") : `<div class="detail" style="padding:8px">None yet.</div>`}</div>
-      <div class="section-title">Denied</div>
-      <div class="list">${denied.length ? denied.map(renderRowRequest).join("") : `<div class="detail" style="padding:8px">None yet.</div>`}</div>`;
-    content.querySelectorAll("[data-act]").forEach(btn => {
-      btn.onclick = async () => {
-        const id = btn.closest(".row").dataset.id;
-        const action = btn.dataset.act;
-        btn.disabled = true;
-        const r = await fetch("/.netlify/functions/review-request", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ id, action })
-        });
-        const d = await r.json().catch(() => ({}));
-        if (r.status === 401) { login(); return; }
-        if (!r.ok) { alert(d.error || "Failed"); btn.disabled = false; return; }
-        if (action === "approve" && d.token) lastIssuedToken = d.token;
-        dashboard();
-      };
-    });
-  } else {
-    const data = await loadTokens();
-    if (!data) return;
-    const active = data.active || [];
-    const revoked = data.revoked || [];
-    content.innerHTML = `
-      <div class="stats">
-        <div class="stat"><b>${active.length}</b><span>ACTIVE TOKENS</span></div>
-        <div class="stat"><b>${revoked.length}</b><span>REVOKED</span></div>
-        <div class="stat"><b>${active.length + revoked.length}</b><span>TOTAL</span></div>
-      </div>
-      <div class="section-title">Active</div>
-      <div class="list">${active.length ? active.map(renderRowToken).join("") : `<div class="detail" style="padding:8px">No active tokens.</div>`}</div>
-      <div class="section-title">Revoked</div>
-      <div class="list">${revoked.length ? revoked.map(renderRowToken).join("") : `<div class="detail" style="padding:8px">None.</div>`}</div>`;
-    content.querySelectorAll('[data-act="revoke"]').forEach(btn => {
-      btn.onclick = async () => {
-        if (!confirm("Revoke this token?")) return;
-        const id = btn.closest(".row").dataset.id;
-        btn.disabled = true;
-        const r = await fetch("/.netlify/functions/revoke-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ id })
-        });
-        if (r.status === 401) { login(); return; }
-        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Failed"); btn.disabled = false; return; }
-        refresh();
-      };
-    });
-  }
+  const data = await loadAccounts();
+  if (!data) return;
+  const pending = data.pending || [];
+  const approved = data.approved || [];
+  const denied = data.denied || [];
+  content.innerHTML = `
+    <div class="stats">
+      <div class="stat"><b>${pending.length}</b><span>PENDING</span></div>
+      <div class="stat"><b>${approved.length}</b><span>APPROVED</span></div>
+      <div class="stat"><b>${denied.length}</b><span>DENIED</span></div>
+    </div>
+    <div class="section-title">Pending</div>
+    <div class="list">${pending.length ? pending.map(renderRow).join("") : `<div class="detail" style="padding:8px">No pending accounts.</div>`}</div>
+    <div class="section-title">Approved</div>
+    <div class="list">${approved.length ? approved.map(renderRow).join("") : `<div class="detail" style="padding:8px">None yet.</div>`}</div>
+    <div class="section-title">Denied</div>
+    <div class="list">${denied.length ? denied.map(renderRow).join("") : `<div class="detail" style="padding:8px">None yet.</div>`}</div>`;
+
+  content.querySelectorAll("[data-act]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.closest(".row").dataset.id;
+      const action = btn.dataset.act;
+      btn.disabled = true;
+      const r = await fetch("/.netlify/functions/review-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id, action })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) { login(); return; }
+      if (!r.ok) { alert(d.error || "Failed"); btn.disabled = false; return; }
+      refresh();
+    };
+  });
 }
 
 (async () => {
-  const r = await fetch("/.netlify/functions/list-requests", { cache: "no-store", credentials: "include" });
+  const r = await fetch("/.netlify/functions/list-accounts", { cache: "no-store", credentials: "include" });
   if (r.status === 401) login();
   else dashboard();
 })();

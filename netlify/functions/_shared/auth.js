@@ -15,7 +15,7 @@ function toBase64Url(bytes) {
 function fromBase64Url(value) {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
   const binary = atob(padded);
-  return Uint8Array.from(binary, c => c.charCodeAt(0));
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
 }
 
 async function sign(value) {
@@ -55,7 +55,10 @@ async function parseToken(token, expectedType) {
 
   const issued = Number(parts[1]);
   if (!Number.isFinite(issued) || issued <= 0) return { ok: false };
-  if (Date.now() - issued >= 1000 * 60 * 60 * 24 * 365 * 10) return { ok: false };
+  // User sessions: 30 days. Admin sessions still use cookie Max-Age separately.
+  const maxAgeMs =
+    expectedType === "user" ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 24 * 365 * 10;
+  if (Date.now() - issued >= maxAgeMs) return { ok: false };
 
   const extra = parts.length >= 4 ? parts[2] : "";
   return { ok: true, type: parts[0], issued, extra };
@@ -68,7 +71,10 @@ async function verifyToken(token, expectedType) {
 
 function getCookie(event, name) {
   const raw = event.headers?.cookie || event.headers?.Cookie || "";
-  const found = raw.split(";").map(v => v.trim()).find(v => v.startsWith(`${name}=`));
+  const found = raw
+    .split(";")
+    .map((v) => v.trim())
+    .find((v) => v.startsWith(`${name}=`));
   return found ? decodeURIComponent(found.slice(name.length + 1)) : null;
 }
 
@@ -95,13 +101,79 @@ function json(statusCode, body, headers = {}) {
 async function hashAccessToken(raw) {
   const buf = await crypto.subtle.digest("SHA-256", enc.encode(String(raw || "")));
   return Array.from(new Uint8Array(buf))
-    .map(b => b.toString(16).padStart(2, "0"))
+    .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
 function generateAccessToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return `akko_${toBase64Url(bytes)}`;
+}
+
+const PBKDF2_ITERS = 120000;
+
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(String(password)),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derived = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERS, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return `pbkdf2$${PBKDF2_ITERS}$${toBase64Url(salt)}$${toBase64Url(new Uint8Array(derived))}`;
+}
+
+async function verifyPassword(password, stored) {
+  try {
+    const parts = String(stored || "").split("$");
+    if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
+    const iterations = Number(parts[1]);
+    if (!Number.isFinite(iterations) || iterations < 10000) return false;
+    const salt = fromBase64Url(parts[2]);
+    const expected = fromBase64Url(parts[3]);
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(String(password)),
+      "PBKDF2",
+      false,
+      ["deriveBits"]
+    );
+    const derived = new Uint8Array(
+      await crypto.subtle.deriveBits(
+        { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+        keyMaterial,
+        expected.length * 8
+      )
+    );
+    if (derived.length !== expected.length) return false;
+    let diff = 0;
+    for (let i = 0; i < derived.length; i++) diff |= derived[i] ^ expected[i];
+    return diff === 0;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeUsername(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 32);
+}
+
+function isValidUsername(username) {
+  return /^[a-z0-9_]{3,32}$/.test(username);
+}
+
+function isValidPassword(password) {
+  const p = String(password || "");
+  return p.length >= 6 && p.length <= 128;
 }
 
 module.exports = {
@@ -113,5 +185,10 @@ module.exports = {
   clearCookie,
   json,
   hashAccessToken,
-  generateAccessToken
+  generateAccessToken,
+  hashPassword,
+  verifyPassword,
+  normalizeUsername,
+  isValidUsername,
+  isValidPassword
 };
