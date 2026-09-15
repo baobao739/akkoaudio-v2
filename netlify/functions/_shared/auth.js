@@ -55,10 +55,13 @@ async function parseToken(token, expectedType) {
 
   const issued = Number(parts[1]);
   if (!Number.isFinite(issued) || issued <= 0) return { ok: false };
-  // User sessions: 30 days. Admin sessions still use cookie Max-Age separately.
-  const maxAgeMs =
-    expectedType === "user" ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 24 * 365 * 10;
-  if (Date.now() - issued >= maxAgeMs) return { ok: false };
+
+  // User sessions are permanent (access ends only when admin revokes the account).
+  // Admin sessions still expire after a long window as a safety net.
+  if (expectedType !== "user") {
+    const maxAgeMs = 1000 * 60 * 60 * 24 * 365 * 10;
+    if (Date.now() - issued >= maxAgeMs) return { ok: false };
+  }
 
   const extra = parts.length >= 4 ? parts[2] : "";
   return { ok: true, type: parts[0], issued, extra };
@@ -176,6 +179,9 @@ function isValidPassword(password) {
   return p.length >= 6 && p.length <= 128;
 }
 
+/** Effectively permanent browser cookie (browsers may still cap ~400 days). */
+const USER_SESSION_SECONDS = 60 * 60 * 24 * 365 * 10;
+
 module.exports = {
   makeToken,
   verifyToken,
@@ -190,5 +196,6 @@ module.exports = {
   verifyPassword,
   normalizeUsername,
   isValidUsername,
-  isValidPassword
+  isValidPassword,
+  USER_SESSION_SECONDS
 };

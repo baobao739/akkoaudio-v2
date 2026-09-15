@@ -27,13 +27,15 @@ exports.handler = async (event) => {
     const pending = [];
     const approved = [];
     const denied = [];
+    const revoked = [];
     for (const row of data || []) {
       if (row.status === "pending") pending.push(row);
       else if (row.status === "approved") approved.push(row);
+      else if (row.status === "revoked") revoked.push(row);
       else denied.push(row);
     }
 
-    return json(200, { pending, approved, denied });
+    return json(200, { pending, approved, denied, revoked });
   } catch (error) {
     console.error(error);
     return json(500, { error: "Server error." });

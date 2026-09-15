@@ -6,14 +6,14 @@ const {
   verifyPassword,
   normalizeUsername,
   isValidUsername,
-  isValidPassword
+  isValidPassword,
+  USER_SESSION_SECONDS
 } = require("./_shared/auth");
 
 const hits = new Map();
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILS = 12;
 const FAIL_DELAY_MS = 500;
-const USER_SESSION_SECONDS = 60 * 60 * 24 * 30;
 
 function clientKey(event) {
   const h = event.headers || {};
@@ -38,6 +38,10 @@ function getBucket(key) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function attemptsSet(key, bucket) {
+  hits.set(key, bucket);
 }
 
 function db() {
@@ -102,7 +106,22 @@ exports.handler = async (event) => {
       });
     }
 
-    // approved
+    if (account.status === "revoked") {
+      return json(200, {
+        ok: false,
+        status: "revoked",
+        message: "Your access was revoked by the admin."
+      });
+    }
+
+    if (account.status !== "approved") {
+      return json(200, {
+        ok: false,
+        status: account.status,
+        message: "Account is not allowed to log in."
+      });
+    }
+
     hits.delete(key);
     supabase
       .from("accounts")
@@ -129,7 +148,3 @@ exports.handler = async (event) => {
     return json(400, { error: "Invalid request." });
   }
 };
-
-function attemptsSet(key, bucket) {
-  hits.set(key, bucket);
-}

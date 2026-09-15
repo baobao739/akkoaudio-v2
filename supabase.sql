@@ -1,6 +1,5 @@
 -- Run once in Supabase SQL Editor.
--- If you already ran the old access_requests/access_tokens schema, this still works:
--- it only adds the accounts table used by the new login system.
+-- If you already created accounts earlier, also run the migration block at the bottom.
 
 create extension if not exists pgcrypto;
 
@@ -34,14 +33,14 @@ create table if not exists public.access_tokens (
 create index if not exists access_tokens_active_idx
   on public.access_tokens (revoked, created_at desc);
 
--- New account system (username + password, admin approval)
+-- Account system (username + password, admin approval / revoke)
 create table if not exists public.accounts (
   id uuid primary key default gen_random_uuid(),
   username text not null unique
     check (char_length(trim(username)) between 3 and 32),
   password_hash text not null,
   status text not null default 'pending'
-    check (status in ('pending', 'approved', 'denied')),
+    check (status in ('pending', 'approved', 'denied', 'revoked')),
   created_at timestamptz not null default now(),
   reviewed_at timestamptz,
   review_note text check (review_note is null or char_length(review_note) <= 300),
@@ -57,3 +56,8 @@ create index if not exists accounts_username_lower_idx
 alter table public.access_requests enable row level security;
 alter table public.access_tokens enable row level security;
 alter table public.accounts enable row level security;
+
+-- Migration: if accounts already existed without "revoked", run this:
+-- alter table public.accounts drop constraint if exists accounts_status_check;
+-- alter table public.accounts add constraint accounts_status_check
+--   check (status in ('pending', 'approved', 'denied', 'revoked'));

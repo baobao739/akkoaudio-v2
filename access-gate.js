@@ -304,6 +304,8 @@
       subtitle = "Your account is still pending approval. Try logging in again after the admin approves you.";
     } else if (statusHint === "denied") {
       subtitle = "This account was denied. Contact the admin if you think that was a mistake.";
+    } else if (statusHint === "revoked") {
+      subtitle = "Your access was revoked by the admin. Log in will not work until you are re-approved.";
     }
 
     const overlay = document.createElement("div");
@@ -390,10 +392,11 @@
         }
 
         if (data.status === "pending") {
-          loginOk.textContent = "";
           loginErr.textContent = data.message || "Account is pending approval.";
         } else if (data.status === "denied") {
           loginErr.textContent = data.message || "Account was denied.";
+        } else if (data.status === "revoked") {
+          loginErr.textContent = data.message || "Access was revoked.";
         } else {
           loginErr.textContent = data.error || "Login failed.";
         }
@@ -447,7 +450,6 @@
         regOk.textContent =
           data.message || "Account created. Wait for admin approval, then log in.";
         regBtn.disabled = false;
-        // Switch to login tab
         tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === "login"));
         panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === "login"));
         loginUser.value = username;
@@ -477,7 +479,13 @@
     }
 
     document.getElementById("akkoflac-verify-overlay")?.remove();
-    createGate(session.reason === "pending" || session.reason === "denied" ? session.reason : null);
+    const hint =
+      session.reason === "pending" ||
+      session.reason === "denied" ||
+      session.reason === "revoked"
+        ? session.reason
+        : null;
+    createGate(hint);
   }
 
   function isOnboardingDone() {
